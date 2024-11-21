@@ -1,0 +1,141 @@
+Documentation: Setting up EKS Cluster, MySQL, and Vault
+Workflow Overview
+This workflow sets up an Amazon EKS (Elastic Kubernetes Service) cluster, installs MySQL and Vault using Helm charts, and configures Vault to manage database credentials and integrate with Kubernetes for authentication.
+
+The major steps include:
+
+Creating an EKS cluster using eksctl.
+Enabling EBS (Elastic Block Store) support for persistent volumes.
+Installing MySQL and Vault Helm charts.
+Initializing and configuring Vault for database secrets management.
+Setting up Kubernetes authentication in Vault.
+Deploying a sample application that uses Vault to access secrets.
+
+Detailed Steps
+1. Create EKS Cluster
+eksctl create cluster --name $CLUSTER_NAME --nodes $NODES --with-oidc --ssh-access --ssh-public-key $SSH_KEY_NAME --managed
+
+What it does:
+Creates a new EKS cluster named learn-vault with 3 nodes.
+Enables OIDC (OpenID Connect) integration for identity federation.
+Sets up SSH access for managing nodes using the specified SSH key.
+
+How it works:
+eksctl automates the creation of the EKS cluster by provisioning the necessary EC2 instances, networking resources, and Kubernetes configurations.
+
+2. Enable EBS CSI Driver
+eksctl create iamserviceaccount ...
+eksctl create addon ...
+
+What it does:
+Sets up the EBS CSI driver to enable persistent storage in the cluster.
+Creates an IAM role (AmazonEKS_EBS_CSI_DriverRole) with the necessary permissions for the driver.
+Adds the EBS CSI driver to the cluster.
+
+How it works:
+The IAM service account binds the EKS cluster with the EBS CSI driver.
+The addon command installs and configures the CSI driver for managing persistent volumes.
+
+3. Install MySQL Using Helm
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm install mysql bitnami/mysql --set auth.rootPassword=$ROOT_PASSWORD
+
+What it does:
+Adds the Bitnami Helm repository.
+Deploys MySQL to the cluster using the Helm chart with a root password.
+
+How it works:
+Helm simplifies the installation and configuration of Kubernetes applications using pre-defined charts.
+
+4. Install Vault Using Helm
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm install vault hashicorp/vault --set "server.ha.enabled=true"
+
+What it does:
+Adds the HashiCorp Helm repository.
+Installs Vault in high availability mode.
+
+How it works:
+Vault is deployed as a StatefulSet, ensuring it has persistent storage and supports scaling.
+
+5. Initialize and Unseal Vault
+kubectl exec vault-0 -- vault operator init ...
+kubectl exec vault-0 -- vault operator unseal $UNSEAL_KEY
+
+What it does:
+Initializes Vault, generating a root token and unseal keys (saved in cluster-keys.json).
+Unseals the Vault server to make it operational.
+
+How it works:
+Vault uses Shamir’s Secret Sharing to split the master key into key shares. Unsealing reassembles the master key to decrypt Vault data.
+
+6. Join Additional Vault Nodes to the Cluster
+kubectl exec vault-1 -- vault operator raft join ...
+kubectl exec vault-1 -- vault operator unseal $UNSEAL_KEY
+
+What it does:
+Configures additional Vault pods to join the cluster using Raft protocol for HA.
+Unseals each additional pod.
+
+How it works:
+Raft ensures high availability by replicating Vault’s state across all nodes.
+
+7. Enable Database Secrets Engine
+kubectl exec vault-0 -- vault secrets enable database
+kubectl exec vault-0 -- vault write database/config/mysql ...
+kubectl exec vault-0 -- vault write database/roles/readonly ...
+
+What it does:
+Enables the database secrets engine in Vault.
+Configures Vault to connect to MySQL using root credentials.
+Creates a role (readonly) to generate credentials with read-only access.
+
+How it works:
+Vault dynamically generates database credentials when requested, ensuring credentials are short-lived and secure.
+8
+. Configure Kubernetes Authentication in Vault
+vault auth enable kubernetes
+vault write auth/kubernetes/config ...
+
+What it does:
+Enables the Kubernetes authentication method in Vault.
+Configures Vault to recognize Kubernetes Service Account tokens.
+
+How it works:
+Vault validates tokens issued by Kubernetes to allow pods to authenticate and retrieve secrets.
+
+9. Deploy a Sample Application
+kubectl apply --filename internal-app.yaml
+kubectl apply --filename devwebapp.yaml
+
+What it does:
+Deploys a sample application (devwebapp) that uses Vault to access MySQL credentials.
+The application retrieves credentials from Vault and writes them to a file.
+
+How it works:
+Kubernetes Service Account binds the app pod to Vault policies, allowing it to securely retrieve secrets.
+
+10. Verify the Application
+kubectl exec --stdin=true --tty=true devwebapp --container devwebapp -- cat /vault/secrets/database-connect.sh
+
+What it does:
+Displays the credentials retrieved by the application from Vault.
+
+How it works:
+Vault generates the credentials dynamically when requested by the app.
+High-Level Architecture
+
+EKS Cluster:
+Managed Kubernetes service running multiple pods (MySQL, Vault, and the application).
+
+Persistent Volumes:
+Enabled using the EBS CSI driver for storing application and database data.
+
+MySQL:
+Deployed using Helm for database services.
+
+Vault:
+Deployed as a StatefulSet to manage secrets securely and dynamically.
+
+Application:
+Connects to Vault to retrieve database credentials for secure access.
